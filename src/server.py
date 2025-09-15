@@ -1,38 +1,55 @@
 # reference: https://github.com/langchain-ai/langchain/blob/master/cookbook/wikibase_agent.ipynb
 import httpx
 import json
+import re
 from mcp.server.fastmcp import FastMCP
 from typing import List, Dict
+from langchain_community.tools.wikidata.tool import WikidataQueryRun
+from langchain_community.utilities.wikidata import WikidataAPIWrapper
 
 server = FastMCP("Wikidata MCP Server")
+wikidata_query_tool = WikidataQueryRun(api_wrapper=WikidataAPIWrapper())
 
 WIKIDATA_URL = "https://www.wikidata.org/w/api.php"
 HEADER = {"Accept": "application/json", "User-Agent": "foobar"}
 
 
+def _sanitize_summary(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
 async def search_wikidata(query: str, is_entity: bool = True) -> str:
-    """
-    Search for a Wikidata item or property ID by its query.
-    """
+    """Search for a Wikidata item or property ID by its query."""
+    if is_entity:
+        try:
+            results = wikidata_query_tool.api_wrapper.wikidata_mw.search(
+                query, results=1
+            )
+        except Exception:
+            return "Error searching Wikidata. Please try again later."
+        if not results:
+            return "No results found. Consider changing the search term."
+        return results[0]
+
     params = {
         "action": "query",
         "list": "search",
         "srsearch": query,
-        "srnamespace": 0 if is_entity else 120,
-        "srlimit": 1,  # TODO: add a parameter to limit the number of results?
-        "srqiprofile": "classic_noboostlinks" if is_entity else "classic",
+        "srnamespace": 120,
+        "srlimit": 1,
+        "srqiprofile": "classic",
         "srwhat": "text",
         "format": "json",
     }
     async with httpx.AsyncClient() as client:
-        response = await client.get(WIKIDATA_URL, headers=HEADER, params=params)
-    response.raise_for_status()
-    try:
-        title = response.json()["query"]["search"][0]["title"]
-        title = title.split(":")[-1]
-        return title
-    except KeyError:
-        return "No results found. Consider changing the search term."
+        try:
+            response = await client.get(WIKIDATA_URL, headers=HEADER, params=params)
+            response.raise_for_status()
+            title = response.json()["query"]["search"][0]["title"]
+            title = title.split(":")[-1]
+            return title
+        except (httpx.HTTPError, KeyError, IndexError):
+            return "No results found. Consider changing the search term."
 
 
 @server.tool()
@@ -112,6 +129,18 @@ async def execute_sparql(sparql_query: str) -> str:
     response.raise_for_status()
     result = response.json()["results"]["bindings"]
     return json.dumps(result)
+
+
+@server.tool()
+def wikidata_query(query: str) -> str:
+    """Search Wikidata and return a summary for the given entity or QID."""
+    try:
+        summary = wikidata_query_tool.run(query)
+    except Exception:
+        return "Error querying Wikidata. Please try again later."
+    if not isinstance(summary, str) or not summary.strip():
+        return "No summary available."
+    return _sanitize_summary(summary)
 
 
 @server.tool()
