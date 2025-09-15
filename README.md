@@ -44,6 +44,12 @@ Run the server with:
 $ uv run src/server.py
 ```
 
+The logging level defaults to `INFO`. Override it by setting `LOG_LEVEL`:
+
+```bash
+$ LOG_LEVEL=WARNING uv run src/server.py
+```
+
 If you want to test it with a simple client code (with `langchain-mcp-adapters`), run the client with:
 
 ```bash
@@ -127,13 +133,15 @@ The LLM extracts valid entity and property identifiers, executes a sparql query,
 
 The following tools are implemented in the server:
 
-| Tool                                                 | Description                                                                |
+| Tool                                                 | Description |
 | ---------------------------------------------------- | -------------------------------------------------------------------------- |
-| `search_entity(query: str)`                          | Search for a Wikidata entity ID by its query.                              |
-| `search_property(query: str)`                        | Search for a Wikidata property ID by its query.                            |
-| `get_properties(entity_id: str)`                     | Get the properties associated with a given Wikidata entity ID.             |
-| `execute_sparql(sparql_query: str)`                  | Execute a SPARQL query on Wikidata.                                        |
+| `search_entity(query: str)`                          | Search for a Wikidata entity ID by its query. |
+| `search_property(query: str)`                        | Search for a Wikidata property ID by its query. |
+| `get_properties(entity_id: str)`                     | Get the properties associated with a given Wikidata entity ID. |
+| `execute_sparql(sparql_query: str)`                  | Execute a SPARQL query on Wikidata. |
+| `wikidata_query(query: str)`                         | Retrieve a summary for an entity or QID using the LangChain `WikidataQueryRun` tool. |
 | `get_metadata(entity_id: str, language: str = "en")` | Retrieve the English label and description for a given Wikidata entity ID. |
+
 
 ---
 
