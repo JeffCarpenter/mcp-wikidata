@@ -1,38 +1,63 @@
 # reference: https://github.com/langchain-ai/langchain/blob/master/cookbook/wikibase_agent.ipynb
+import asyncio
 import httpx
 import json
+import logging
+import re
 from mcp.server.fastmcp import FastMCP
 from typing import List, Dict
+from langchain_community.tools.wikidata.tool import WikidataQueryRun
+from langchain_community.utilities.wikidata import WikidataAPIWrapper
+from mediawikiapi.exceptions import HTTPTimeoutError, MediaWikiAPIException
+
+logger = logging.getLogger(__name__)
 
 server = FastMCP("Wikidata MCP Server")
+wikidata_query_tool = WikidataQueryRun(api_wrapper=WikidataAPIWrapper())
 
 WIKIDATA_URL = "https://www.wikidata.org/w/api.php"
 HEADER = {"Accept": "application/json", "User-Agent": "foobar"}
 
-
-async def search_wikidata(query: str, is_entity: bool = True) -> str:
-    """
-    Search for a Wikidata item or property ID by its query.
-    """
+async def _http_search(query: str, namespace: int = 0) -> str:
     params = {
         "action": "query",
         "list": "search",
         "srsearch": query,
-        "srnamespace": 0 if is_entity else 120,
-        "srlimit": 1,  # TODO: add a parameter to limit the number of results?
-        "srqiprofile": "classic_noboostlinks" if is_entity else "classic",
+        "srnamespace": namespace,
+        "srlimit": 1,
+        "srqiprofile": "classic",
         "srwhat": "text",
         "format": "json",
     }
-    async with httpx.AsyncClient() as client:
-        response = await client.get(WIKIDATA_URL, headers=HEADER, params=params)
-    response.raise_for_status()
     try:
-        title = response.json()["query"]["search"][0]["title"]
-        title = title.split(":")[-1]
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(WIKIDATA_URL, headers=HEADER, params=params)
+        resp.raise_for_status()
+        title = resp.json()["query"]["search"][0]["title"].split(":", 1)[-1]
         return title
-    except KeyError:
+    except (httpx.HTTPError, KeyError, IndexError) as e:
+        logger.error(
+            f"Wikidata HTTP search failed: {type(e).__name__}: {e}")
         return "No results found. Consider changing the search term."
+
+
+async def search_wikidata(query: str, is_entity: bool = True) -> str:
+    """Search for a Wikidata item or property ID by its query."""
+    if is_entity:
+        try:
+            results = wikidata_query_tool.api_wrapper.wikidata_mw.search(
+                query, results=1
+            )
+        except (HTTPTimeoutError, MediaWikiAPIException) as e:
+            logger.error(
+                f"Wikidata wrapper search failed: {type(e).__name__}: {e}")
+        except ValueError:
+            return "Invalid search term provided."
+        else:
+            if results:
+                return results[0]
+    namespace = 0 if is_entity else 120
+    return await _http_search(query, namespace=namespace)
 
 
 @server.tool()
@@ -115,6 +140,19 @@ async def execute_sparql(sparql_query: str) -> str:
 
 
 @server.tool()
+async def wikidata_query(query: str) -> str:
+    """Search Wikidata and return a summary for the given entity or QID."""
+    try:
+        summary = await asyncio.to_thread(wikidata_query_tool.run, query)
+    except Exception as e:
+        logger.error(f"Wikidata query failed: {type(e).__name__}: {e}")
+        return "Error querying Wikidata. Please try again later."
+    if not isinstance(summary, str) or not summary.strip():
+        return "No summary available."
+    return re.sub(r"\s+", " ", summary).strip()
+
+
+@server.tool()
 async def get_metadata(entity_id: str, language: str = "en") -> Dict[str, str]:
     """
     Retrieve the English label and description for a given Wikidata entity ID.
@@ -150,4 +188,5 @@ async def get_metadata(entity_id: str, language: str = "en") -> Dict[str, str]:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     server.run()
