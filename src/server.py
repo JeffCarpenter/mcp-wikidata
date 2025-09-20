@@ -3,24 +3,29 @@ import httpx
 import json
 from mcp.server.fastmcp import FastMCP
 from typing import List, Dict
+from langchain_community.tools.wikidata.tool import WikidataQueryRun
+from langchain_community.utilities.wikidata import WikidataAPIWrapper
 
 server = FastMCP("Wikidata MCP Server")
+wikidata_query_tool = WikidataQueryRun(api_wrapper=WikidataAPIWrapper())
 
 WIKIDATA_URL = "https://www.wikidata.org/w/api.php"
 HEADER = {"Accept": "application/json", "User-Agent": "foobar"}
 
 
 async def search_wikidata(query: str, is_entity: bool = True) -> str:
-    """
-    Search for a Wikidata item or property ID by its query.
-    """
+    """Search for a Wikidata item or property ID by its query."""
+    if is_entity:
+        results = wikidata_query_tool.api_wrapper.wikidata_mw.search(query, results=1)
+        return results[0] if results else "No results found. Consider changing the search term."
+
     params = {
         "action": "query",
         "list": "search",
         "srsearch": query,
-        "srnamespace": 0 if is_entity else 120,
-        "srlimit": 1,  # TODO: add a parameter to limit the number of results?
-        "srqiprofile": "classic_noboostlinks" if is_entity else "classic",
+        "srnamespace": 120,
+        "srlimit": 1,
+        "srqiprofile": "classic",
         "srwhat": "text",
         "format": "json",
     }
@@ -112,6 +117,12 @@ async def execute_sparql(sparql_query: str) -> str:
     response.raise_for_status()
     result = response.json()["results"]["bindings"]
     return json.dumps(result)
+
+
+@server.tool()
+def wikidata_query(query: str) -> str:
+    """Search Wikidata and return a summary for the given entity or QID."""
+    return wikidata_query_tool.run(query)
 
 
 @server.tool()
